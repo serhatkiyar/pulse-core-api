@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr
 
 
 class PostBase(BaseModel):
@@ -32,8 +33,7 @@ class UserResponse(UserBase):
     email: EmailStr
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserLogin(BaseModel):
@@ -52,7 +52,8 @@ class Token(BaseModel):
 
 class VoteIn(BaseModel):
     post_id: int
-    method: int
+    # 1: beğen, 0: beğeniyi geri çek
+    method: Literal[0, 1]
 
 
 class PostResponse(PostBase):
@@ -61,5 +62,4 @@ class PostResponse(PostBase):
     owner_id: int
     owner: UserResponse
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

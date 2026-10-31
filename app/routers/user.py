@@ -21,6 +21,15 @@ def get_user(id: int, db: Session = Depends(get_db)):
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=UserResponse)
 def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
+    existing_user = (
+        db.query(models.User).filter(models.User.email == user_in.email).first()
+    )
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bu e-posta adresiyle kayıtlı bir kullanıcı zaten mevcut.",
+        )
+
     user = models.User(**user_in.model_dump())
     user.password = utils.hash_password(user.password)
     db.add(user)

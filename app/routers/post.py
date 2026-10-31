@@ -12,7 +12,7 @@ router = APIRouter(prefix="/posts", tags=["Posts"])
 @router.get("/", response_model=list[PostResponse])
 def get_posts(
     db: Session = Depends(get_db),
-    get_current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(get_current_user),
 ):
     posts = db.query(models.Post).all()
     return posts
@@ -52,13 +52,10 @@ def update_post(
             detail="Bu postu güncellemeye yetkiniz yok",
         )
 
-    query.update(
-        {**post_in.model_dump(), "owner_id": post.owner_id}, synchronize_session=False
-    )
+    query.update(post_in.model_dump(), synchronize_session=False)
     db.commit()
 
     db.refresh(post)
-    print(post.id)
 
     return {"updated post": post}
 
