@@ -1,20 +1,11 @@
-import bcrypt
-from passlib.context import CryptContext
+from pwdlib import PasswordHash
 
-# Passlib 1.7.4 compatibility with bcrypt >= 4.0.0
-if not hasattr(bcrypt, "__about__"):
-
-    class About:
-        __version__ = getattr(bcrypt, "__version__", "4.0.0")
-
-    bcrypt.__about__ = About()
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+password_hash = PasswordHash.recommended()
 
 
-def hash(password: str) -> str:
-    return pwd_context.hash(password)
+def hash_password(password: str):
+    return password_hash.hash(password)
 
 
-def verify(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+def verify_password(password: str, hashed_password: str):
+    return password_hash.verify(password, hashed_password)
