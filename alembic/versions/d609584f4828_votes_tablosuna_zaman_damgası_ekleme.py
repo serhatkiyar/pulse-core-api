@@ -1,7 +1,7 @@
 """votes tablosuna zaman damgası ekleme
 
 Revision ID: d609584f4828
-Revises:
+Revises: a1f3c9e2b7d4
 Create Date: 2026-10-31 13:12:15.353881
 
 """
@@ -14,7 +14,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "d609584f4828"
-down_revision: str | Sequence[str] | None = None
+down_revision: str | Sequence[str] | None = "a1f3c9e2b7d4"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
