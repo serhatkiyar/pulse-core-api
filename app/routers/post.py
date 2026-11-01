@@ -13,13 +13,26 @@ router = APIRouter(prefix="/posts", tags=["Posts"])
 def get_posts(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
+    limit: int = 10,
+    skip: int = 0,
+    search: str | None = "",
 ):
-    posts = db.query(models.Post).all()
+    posts = (
+        db.query(models.Post)
+        .filter(models.Post.title.contains(search))
+        .limit(limit)
+        .offset(skip)
+        .all()
+    )
     return posts
 
 
-@router.get("/{id}")
-def get_post(id: int, db: Session = Depends(get_db)):
+@router.get("/{id}", response_model=PostResponse)
+def get_post(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     query = db.query(models.Post).filter(models.Post.id == id)
     post = query.first()
 
@@ -28,10 +41,10 @@ def get_post(id: int, db: Session = Depends(get_db)):
             status_code=status.HTTP_404_NOT_FOUND, detail="post bulunamadı"
         )
 
-    return {"data": post}
+    return post
 
 
-@router.put("/{id}")
+@router.put("/{id}", response_model=PostResponse)
 def update_post(
     id: int,
     post_in: PostUpdate,
@@ -54,13 +67,12 @@ def update_post(
 
     query.update(post_in.model_dump(), synchronize_session=False)
     db.commit()
-
     db.refresh(post)
 
-    return {"updated post": post}
+    return post
 
 
-@router.post("/")
+@router.post("/", status_code=status.HTTP_201_CREATED, response_model=PostResponse)
 def add_post(
     post_in: PostCreate,
     db: Session = Depends(get_db),
@@ -71,7 +83,7 @@ def add_post(
     db.commit()
     db.refresh(post)
 
-    return {"added post": post}
+    return post
 
 
 @router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -94,8 +106,7 @@ def delete_post(
             detail="Bu postu silmeye yetkiniz yok",
         )
 
-    query.delete()
-
+    query.delete(synchronize_session=False)
     db.commit()
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
