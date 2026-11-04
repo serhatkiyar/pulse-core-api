@@ -1,31 +1,29 @@
-from fastapi import Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from fastapi import Depends
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models, oauth2, schemas, utils
 from ..database import get_db
+from ..errors import InvalidUserCredentialsError, PermissionDeniedError
 
 
 class AuthService:
-    def __init__(self, db: Session = Depends(get_db)):
+    def __init__(self, db: AsyncSession = Depends(get_db)):
         self.db = db
 
-    def login(self, user_credentials) -> schemas.Token:
-        query = self.db.query(models.User).filter(
+    async def login(self, user_credentials) -> schemas.Token:
+        query = select(models.User).where(
             models.User.email == user_credentials.username
         )
-        user = query.first()
+
+        result = await self.db.execute(query)
+        user = result.scalar_one_or_none()
 
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Kullanıcı adı veya şifre yanlış",
-            )
+            raise PermissionDeniedError()
 
         if not utils.verify_password(user_credentials.password, user.password):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Kullanıcı adı veya şifre yanlış",
-            )
+            raise InvalidUserCredentialsError()
 
         access_token = oauth2.create_token(data={"user_id": user.id})
 

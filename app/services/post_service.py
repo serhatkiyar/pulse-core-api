@@ -1,70 +1,76 @@
-from fastapi import Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from fastapi import Depends
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from .. import models
 from ..database import get_db
+from ..errors import PermissionDeniedError, PostNotFoundError
 from ..schemas import PostCreate, PostResponse, PostUpdate
 
 
 class PostService:
-    def __init__(self, db: Session = Depends(get_db)):
+    def __init__(self, db: AsyncSession = Depends(get_db)):
         self.db = db
 
-    def _get_post_or_404(self, post_id: int) -> models.Post:
-        query = self.db.query(models.Post).filter(models.Post.id == post_id)
-        post = query.first()
+    async def _get_post_or_404(self, post_id: int) -> models.Post:
+        query = (
+            select(models.Post)
+            .options(selectinload(models.Post.owner))
+            .where(models.Post.id == post_id)
+        )
+        result = await self.db.execute(query)
+        post = result.scalar_one_or_none()
 
         if not post:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="post bulunamadı"
-            )
+            raise PostNotFoundError()
         return post
 
-    def get_all(self, limit: int, skip: int, search: str) -> list[PostResponse]:
-        posts = (
-            self.db.query(models.Post)
-            .filter(models.Post.title.contains(search))
+    async def get_all(self, limit: int, skip: int, search: str) -> list[PostResponse]:
+        query = (
+            select(models.Post)
+            .options(selectinload(models.Post.owner))
+            .where(models.Post.title.contains(search))
             .limit(limit)
             .offset(skip)
-            .all()
         )
+
+        result = await self.db.execute(query)
+        posts = result.scalars().all()
+
         return [PostResponse.model_validate(model) for model in posts]
 
-    def get_by_id(self, post_id: int) -> PostResponse:
-        post = self._get_post_or_404(post_id)
+    async def get_by_id(self, post_id: int) -> PostResponse:
+        post = await self._get_post_or_404(post_id)
         return PostResponse.model_validate(post)
 
-    def create(self, post_in: PostCreate, user_id: int) -> PostResponse:
+    async def create(self, post_in: PostCreate, user_id: int) -> PostResponse:
         post = models.Post(**post_in.model_dump(), owner_id=user_id)
         self.db.add(post)
-        self.db.commit()
-        self.db.refresh(post)
+        await self.db.commit()
+        await self.db.refresh(post, ["owner"])
         return PostResponse.model_validate(post)
 
-    def update(self, post_id: int, post_in: PostUpdate, user_id: int) -> PostResponse:
-        post = self._get_post_or_404(post_id)
+    async def update(
+        self, post_id: int, post_in: PostUpdate, user_id: int
+    ) -> PostResponse:
+        post = await self._get_post_or_404(post_id)
 
         if post.owner_id != user_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Bu postu güncellemeye yetkiniz yok",
-            )
+            raise PermissionDeniedError()
 
         for key, value in post_in.model_dump().items():
             setattr(post, key, value)
 
-        self.db.commit()
-        self.db.refresh(post)
+        await self.db.commit()
+        await self.db.refresh(post, ["owner"])
         return PostResponse.model_validate(post)
 
-    def delete(self, post_id: int, user_id: int) -> None:
-        post = self._get_post_or_404(post_id)
+    async def delete(self, post_id: int, user_id: int) -> None:
+        post = await self._get_post_or_404(post_id)
 
         if post.owner_id != user_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Bu postu silmeye yetkiniz yok",
-            )
+            raise PermissionDeniedError()
 
-        self.db.delete(post)
-        self.db.commit()
+        await self.db.delete(post)
+        await self.db.commit()

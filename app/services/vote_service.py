@@ -1,45 +1,42 @@
-from fastapi import Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from fastapi import Depends
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models
 from ..database import get_db
+from ..errors import PostAlreadyLikedError, VoteNotFoundError
 from ..schemas import VoteIn
 from ..services.post_service import PostService
 
 
 class VoteService:
     def __init__(
-        self, db: Session = Depends(get_db), post_service: PostService = Depends()
+        self, db: AsyncSession = Depends(get_db), post_service: PostService = Depends()
     ):
         self.db = db
         self.post_service = post_service
 
-    def vote(self, vote_in: VoteIn, user_id: int):
-        self.post_service.get_by_id(vote_in.post_id)
+    async def vote(self, vote_in: VoteIn, user_id: int):
+        await self.post_service.get_by_id(vote_in.post_id)
 
-        vote_query = self.db.query(models.Vote).filter(
-            models.Vote.post_id == vote_in.post_id,
-            models.Vote.user_id == user_id,
+        query = select(models.Vote).where(
+            models.Vote.post_id == vote_in.post_id, models.Vote.user_id == user_id
         )
-        found_vote = vote_query.first()
+        result = await self.db.execute(query)
+        vote_found = result.scalar_one_or_none()
 
         if vote_in.method == 1:
-            if found_vote:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"{user_id} id'li kullanıcı bu postu zaten beğendi",
-                )
+            if vote_found:
+                raise PostAlreadyLikedError()
             new_vote = models.Vote(post_id=vote_in.post_id, user_id=user_id)
             self.db.add(new_vote)
-            self.db.commit()
+            await self.db.commit()
             return {"message": "Post başarıyla beğenildi."}
 
         else:
-            if not found_vote:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Geri çekilecek bir beğeni bulunamadı",
-                )
-            vote_query.delete(synchronize_session=False)
-            self.db.commit()
+            if not vote_found:
+                raise VoteNotFoundError()
+            # TODO: Oy'u sil
+            await self.db.delete(vote_found)
+            await self.db.commit()
             return {"message": "Beğeni başarıyla geri çekildi."}

@@ -1,45 +1,43 @@
-from fastapi import Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from fastapi import Depends
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models, utils
 from ..database import get_db
+from ..errors import EmailAlreadyExistsError, UserNotFoundError
 from ..schemas import UserCreate, UserResponse
 
 
 class UserService:
-    def __init__(self, db: Session = Depends(get_db)):
+    def __init__(self, db: AsyncSession = Depends(get_db)):
         self.db = db
 
-    def get_by_id(self, user_id: int) -> UserResponse:
-        query = self.db.query(models.User).filter(models.User.id == user_id)
-        user = query.first()
+    async def get_by_id(self, user_id: int) -> UserResponse:
+        query = select(models.User).where(models.User.id == user_id)
+        result = await self.db.execute(query)
+        user = result.scalar_one_or_none()
+
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Kullanıcı bulunamadı."
-            )
+            raise UserNotFoundError
 
         return UserResponse.model_validate(user)
 
-    def create(
+    async def create(
         self,
         user_in: UserCreate,
     ) -> UserResponse:
 
-        existing_user = (
-            self.db.query(models.User)
-            .filter(models.User.email == user_in.email)
-            .first()
-        )
-        if existing_user:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Bu e-posta adresiyle kayıtlı bir kullanıcı zaten mevcut.",
-            )
+        query = select(models.User).where(models.User.email == user_in.email)
+        result = await self.db.execute(query)
+        user_exist = result.scalar_one_or_none()
+
+        if user_exist:
+            raise EmailAlreadyExistsError()
 
         user = models.User(**user_in.model_dump())
         user.password = utils.hash_password(user.password)
         self.db.add(user)
-        self.db.commit()
-        self.db.refresh(user)
+        await self.db.commit()
+        await self.db.refresh(user)
 
         return UserResponse.model_validate(user)
