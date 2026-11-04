@@ -1,43 +1,49 @@
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app import models
 from app.config import settings
 from app.database import get_db
+from app.limiter import limiter
 from app.main import app
 from app.models import Base
 from app.oauth2 import create_token
 
-engine = create_engine(
-    f"postgresql+psycopg2://{settings.DATABASE_USER}:{settings.DATABASE_PASSWORD}@{settings.DATABASE_HOST}/{settings.DATABASE_NAME}_test"
+engine = create_async_engine(
+    f"postgresql+asyncpg://{settings.DATABASE_USER}:{settings.DATABASE_PASSWORD}@{settings.DATABASE_HOST}/{settings.DATABASE_NAME}_test",
+    poolclass=NullPool,
 )
 
-TestingLocalSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+TestingLocalSession = async_sessionmaker(expire_on_commit=False, bind=engine)
 
 
 @pytest.fixture
 def session():
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
-    db = TestingLocalSession()
-    try:
-        yield db
-    finally:
-        db.close()
+
+    async def reset_db():
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
+
+    asyncio.run(reset_db())
+    yield
 
 
 @pytest.fixture
 def client(session):
-    def get_test_db():
-        try:
-            yield session
-        finally:
-            session.close()
+    async def get_test_db():
+        async with TestingLocalSession() as db:
+            yield db
 
     app.dependency_overrides[get_db] = get_test_db
+    limiter.enabled = False
     yield TestClient(app)
+    limiter.enabled = True
 
 
 @pytest.fixture
@@ -83,7 +89,7 @@ def authorized_client(client, token):
 
 
 @pytest.fixture
-def test_posts(test_user, session, test_user2):
+def test_posts(test_user, session: AsyncSession, test_user2):
     posts_data = [
         {
             "title": "1. başlık",
@@ -111,9 +117,16 @@ def test_posts(test_user, session, test_user2):
         },
     ]
 
-    post_models = [models.Post(**post) for post in posts_data]
-    session.add_all(post_models)
-    session.commit()
+    async def add_posts():
+        async with TestingLocalSession() as session:
+            post_models = [models.Post(**post) for post in posts_data]
 
-    posts = session.query(models.Post).order_by(models.Post.id).all()
-    return posts
+            session.add_all(post_models)
+            await session.commit()
+
+            query = select(models.Post).order_by(models.Post.id)
+            result = await session.execute(query)
+            posts = result.scalars().all()
+            return posts
+
+    return asyncio.run(add_posts())

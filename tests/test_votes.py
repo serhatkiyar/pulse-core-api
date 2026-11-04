@@ -1,13 +1,19 @@
+import asyncio
 import pytest
 
 from app import models
+from tests.conftest import TestingLocalSession
 
 
 @pytest.fixture
 def test_vote(test_posts, session, test_user):
-    new_vote = models.Vote(post_id=test_posts[3].id, user_id=test_user["id"])
-    session.add(new_vote)
-    session.commit()
+    async def add_vote():
+        async with TestingLocalSession() as db:
+            new_vote = models.Vote(post_id=test_posts[3].id, user_id=test_user["id"])
+            db.add(new_vote)
+            await db.commit()
+
+    asyncio.run(add_vote())
 
 
 def test_vote_on_post(authorized_client, test_posts):
