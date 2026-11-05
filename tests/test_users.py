@@ -5,14 +5,14 @@ from app import schemas
 from app.config import settings
 
 
-def test_root(client):
-    res = client.get("/")
+async def test_root(client):
+    res = await client.get("/")
     assert res.json().get("message") == "Roottasın"
     assert res.status_code == 200
 
 
-def test_create_user(client):
-    res = client.post(
+async def test_create_user(client):
+    res = await client.post(
         "/users/",
         json={
             "name": "Serhat",
@@ -25,8 +25,8 @@ def test_create_user(client):
     assert res.status_code == 201
 
 
-def test_login_user(client, test_user):
-    res = client.post(
+async def test_login_user(client, test_user):
+    res = await client.post(
         "/login",
         data={
             "username": test_user["email"],
@@ -53,8 +53,8 @@ def test_login_user(client, test_user):
         ("serhat@gmail.com", None, 422),
     ],
 )
-def test_incorrect_login(test_user, client, email, password, status_code):
-    res = client.post(
+async def test_incorrect_login(test_user, client, email, password, status_code):
+    res = await client.post(
         "/login",
         data={"username": email, "password": password},
     )

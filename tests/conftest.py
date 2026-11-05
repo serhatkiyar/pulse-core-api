@@ -1,7 +1,5 @@
-import asyncio
-
 import pytest
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -23,37 +21,41 @@ TestingLocalSession = async_sessionmaker(expire_on_commit=False, bind=engine)
 
 
 @pytest.fixture
-def session():
+async def session():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
 
-    async def reset_db():
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.drop_all)
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(reset_db())
-    yield
+    async with TestingLocalSession() as session:
+        yield session
 
 
 @pytest.fixture
-def client(session):
+async def client(session):
     async def get_test_db():
         async with TestingLocalSession() as db:
             yield db
 
     app.dependency_overrides[get_db] = get_test_db
     limiter.enabled = False
-    yield TestClient(app)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        yield client
+
     limiter.enabled = True
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture
-def test_user(client):
+async def test_user(client):
     user_data = {
         "name": "Serhat",
         "email": "serhat@gmail.com",
         "password": "password123",
     }
-    res = client.post("/users/", json=user_data)
+    res = await client.post("/users/", json=user_data)
     assert res.status_code == 201
     new_user = res.json()
     new_user["password"] = user_data["password"]
@@ -61,13 +63,13 @@ def test_user(client):
 
 
 @pytest.fixture
-def test_user2(client):
+async def test_user2(client):
     user_data = {
         "name": "Ahmet",
         "email": "ahmet@gmail.com",
         "password": "password123",
     }
-    res = client.post("/users/", json=user_data)
+    res = await client.post("/users/", json=user_data)
     assert res.status_code == 201
     new_user = res.json()
     new_user["password"] = user_data["password"]
@@ -80,16 +82,13 @@ def token(test_user):
 
 
 @pytest.fixture
-def authorized_client(client, token):
-    client.headers = {
-        **client.headers,
-        "Authorization": f"Bearer {token}",
-    }
+async def authorized_client(client, token):
+    client.headers["Authorization"] = f"Bearer {token}"
     return client
 
 
 @pytest.fixture
-def test_posts(test_user, session: AsyncSession, test_user2):
+async def test_posts(test_user, session: AsyncSession, test_user2):
     posts_data = [
         {
             "title": "1. başlık",
@@ -118,15 +117,14 @@ def test_posts(test_user, session: AsyncSession, test_user2):
     ]
 
     async def add_posts():
-        async with TestingLocalSession() as session:
-            post_models = [models.Post(**post) for post in posts_data]
+        post_models = [models.Post(**post) for post in posts_data]
 
-            session.add_all(post_models)
-            await session.commit()
+        session.add_all(post_models)
+        await session.commit()
 
-            query = select(models.Post).order_by(models.Post.id)
-            result = await session.execute(query)
-            posts = result.scalars().all()
-            return posts
+        query = select(models.Post).order_by(models.Post.id)
+        result = await session.execute(query)
+        posts = result.scalars().all()
+        return posts
 
-    return asyncio.run(add_posts())
+    return await add_posts()
