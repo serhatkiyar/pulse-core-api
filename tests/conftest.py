@@ -1,5 +1,6 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
+from redis import asyncio as aioredis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -11,6 +12,7 @@ from app.limiter import limiter
 from app.main import app
 from app.models import Base
 from app.oauth2 import create_token
+from app.redis import get_redis
 
 engine = create_async_engine(
     f"postgresql+asyncpg://{settings.DATABASE_USER}:{settings.DATABASE_PASSWORD}@{settings.DATABASE_HOST}/{settings.DATABASE_NAME}_test",
@@ -36,7 +38,16 @@ async def client(session):
         async with TestingLocalSession() as db:
             yield db
 
+    test_redis = aioredis.from_url(
+        settings.REDIS_URL, encoding="utf-8", decode_responses=True
+    )
+    await test_redis.flushdb()
+
+    async def get_test_redis():
+        yield test_redis
+
     app.dependency_overrides[get_db] = get_test_db
+    app.dependency_overrides[get_redis] = get_test_redis
     limiter.enabled = False
 
     async with AsyncClient(
@@ -44,6 +55,7 @@ async def client(session):
     ) as client:
         yield client
 
+    await test_redis.aclose()
     limiter.enabled = True
     app.dependency_overrides.clear()
 
