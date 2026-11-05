@@ -68,3 +68,15 @@ async def delete(
 ):
     await post_service.delete(post_id=id, user_id=current_user.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{id}/vote-count")
+@limiter.limit("60/minute")
+async def get_post_vote(
+    request: Request,
+    id: int,
+    current_user: models.User = Depends(get_current_user),
+    post_service: PostService = Depends(),
+):
+    vote_count = await post_service.get_post_votes(post_id=id)
+    return {"post_id": id, "votes": vote_count}

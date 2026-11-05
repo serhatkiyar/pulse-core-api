@@ -1,17 +1,27 @@
+import json
+
 from fastapi import Depends
-from sqlalchemy import select
+from redis import asyncio as redis
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .. import models
 from ..database import get_db
 from ..errors import PermissionDeniedError, PostNotFoundError
+from ..redis import get_redis
 from ..schemas import PostCreate, PostResponse, PostUpdate
 
 
 class PostService:
-    def __init__(self, db: AsyncSession = Depends(get_db)):
+    def __init__(
+        self,
+        redis: redis.Redis = Depends(get_redis),
+        db: AsyncSession = Depends(get_db),
+    ):
+
         self.db = db
+        self.redis = redis
 
     async def _get_post_or_404(self, post_id: int) -> models.Post:
         query = (
@@ -26,7 +36,33 @@ class PostService:
             raise PostNotFoundError()
         return post
 
+    async def get_post_votes(self, post_id: int) -> int:
+        await self._get_post_or_404(post_id)
+
+        cache_key = f"post:{post_id}:votes"
+        cached = await self.redis.get(cache_key)
+
+        if cached is not None:
+            return int(cached)
+
+        query = (
+            select(func.count())
+            .select_from(models.Vote)
+            .where(models.Vote.post_id == post_id)
+        )
+        result = await self.db.execute(query)
+        vote_count = result.scalar() or 0
+
+        await self.redis.set(cache_key, vote_count, ex=86400)
+        return vote_count
+
     async def get_all(self, limit: int, skip: int, search: str) -> list[PostResponse]:
+        cached_key = f"posts:limit={limit}:skip={skip}:search={search}"
+        cached = await self.redis.get(cached_key)
+
+        if cached:
+            return [PostResponse.model_validate(i) for i in json.loads(cached)]
+
         query = (
             select(models.Post)
             .options(selectinload(models.Post.owner))
@@ -38,10 +74,24 @@ class PostService:
         result = await self.db.execute(query)
         posts = result.scalars().all()
 
-        return [PostResponse.model_validate(model) for model in posts]
+        posts_response = [
+            PostResponse.model_validate(i).model_dump(mode="json") for i in posts
+        ]
+        await self.redis.set(cached_key, json.dumps(posts_response), ex=5)
+
+        return posts_response
 
     async def get_by_id(self, post_id: int) -> PostResponse:
+        cache_key = f"post:{post_id}"
+        cached = await self.redis.get(cache_key)
+
+        if cached:
+            return PostResponse.model_validate_json(cached)
+
         post = await self._get_post_or_404(post_id)
+        post_response = PostResponse.model_validate(post)
+        await self.redis.set(cache_key, post_response.model_dump_json(), ex=60)
+
         return PostResponse.model_validate(post)
 
     async def create(self, post_in: PostCreate, user_id: int) -> PostResponse:
@@ -63,6 +113,7 @@ class PostService:
             setattr(post, key, value)
 
         await self.db.commit()
+        await self.redis.delete(f"post:{post_id}")
         await self.db.refresh(post, ["owner"])
         return PostResponse.model_validate(post)
 
@@ -74,3 +125,4 @@ class PostService:
 
         await self.db.delete(post)
         await self.db.commit()
+        await self.redis.delete(f"post:{post_id}", f"post:{post_id}:votes")
