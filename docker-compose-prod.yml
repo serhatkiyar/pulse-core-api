@@ -12,8 +12,11 @@ services:
       - SECRET_KEY=${SECRET_KEY}
       - ALGORITHM=${ALGORITHM}
       - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     depends_on:
       - postgres
+      - redis
 
   postgres:
     image: postgres:17
@@ -23,5 +26,12 @@ services:
     volumes:
       - postgres-db:/var/lib/postgresql/data
 
+  redis:
+    image: redis:7-alpine
+    container_name: pulse-redis
+    volumes:
+      - redis-data:/data
+
 volumes:
   postgres-db:
+  redis-data:
