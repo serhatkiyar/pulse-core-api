@@ -43,6 +43,12 @@ class InvalidUserCredentialsError(AuthenticationError):
         self.status_code = 403
 
 
+class SessionExpiredError(AuthenticationError):
+    def __init__(self):
+        super().__init__("Bu oturum artık geçerli değil.")
+        self.status_code = 403
+
+
 class EmailAlreadyExistsError(ConflictError):
     def __init__(self, email: str | None = None):
         super().__init__(f"{email} maili zaten sistemde kayıtlı.")

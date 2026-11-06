@@ -59,3 +59,24 @@ async def test_incorrect_login(test_user, client, email, password, status_code):
         data={"username": email, "password": password},
     )
     assert res.status_code == status_code
+
+
+async def test_logout_and_blacklist(authorized_client):
+    res = await authorized_client.post("/logout")
+    assert res.status_code == 200
+    assert res.json() == {"message": "Çıkış yapıldı"}
+
+    res = await authorized_client.get("/posts/")
+    assert res.status_code == 403
+    assert res.json()["detail"] == "Bu oturum artık geçerli değil."
+
+
+async def test_logout_twice_fails(authorized_client):
+    res = await authorized_client.post("/logout")
+    assert res.status_code == 200
+
+    res = await authorized_client.post("/logout")
+    assert res.status_code == 403
+    assert res.json()["detail"] == "Bu oturum artık geçerli değil."
+
+
