@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from .. import models
 from ..limiter import limiter
 from ..oauth2 import get_current_user
-from ..schemas import PostCreate, PostResponse, PostUpdate
+from ..schemas import PostCreate, PostDistanceResponse, PostResponse, PostUpdate
 from ..services.post_service import PostService
 
 router = APIRouter(prefix="/posts", tags=["Posts"])
@@ -20,6 +20,15 @@ async def get_posts(
     post_service: PostService = Depends(),
 ):
     return await post_service.get_all(limit=limit, skip=skip, search=search)
+
+
+@router.get("/semantic-search", response_model=list[PostDistanceResponse])
+async def semantic_search_posts(
+    q: str,
+    limit: int = 5,
+    service: PostService = Depends(PostService),
+):
+    return await service.semantic_search(query_text=q, limit=limit)
 
 
 @router.get("/{id}", response_model=PostResponse)

@@ -10,7 +10,8 @@ from .. import models
 from ..database import get_db
 from ..errors import PermissionDeniedError, PostNotFoundError
 from ..redis import get_redis
-from ..schemas import PostCreate, PostResponse, PostUpdate
+from ..schemas import PostCreate, PostDistanceResponse, PostResponse, PostUpdate
+from .embedding_service import EmbeddingService
 
 
 class PostService:
@@ -18,10 +19,12 @@ class PostService:
         self,
         redis: redis.Redis = Depends(get_redis),
         db: AsyncSession = Depends(get_db),
+        embedding_service: EmbeddingService = Depends(EmbeddingService),
     ):
 
         self.db = db
         self.redis = redis
+        self.embedding_service = embedding_service
 
     async def _get_post_or_404(self, post_id: int) -> models.Post:
         query = (
@@ -35,6 +38,37 @@ class PostService:
         if not post:
             raise PostNotFoundError()
         return post
+
+    async def semantic_search(
+        self, query_text: str, limit: int = 5
+    ) -> list[PostResponse]:
+        query_embedding = await self.embedding_service.get_embedding(
+            text=query_text,
+            task_type="RETRIEVAL_QUERY",
+        )
+
+        distance_col = models.Post.embedding.cosine_distance(query_embedding).label(
+            "distance"
+        )
+        MAX_DISTANCE = 0.45
+
+        query = (
+            select(models.Post, distance_col)
+            .options(selectinload(models.Post.owner))
+            .where(models.Post.embedding.is_not(None))
+            .where(distance_col < MAX_DISTANCE)
+            .order_by(models.Post.embedding.cosine_distance(query_embedding))
+            .limit(limit)
+        )
+
+        result = await self.db.execute(query)
+        posts = result.all()
+        return [
+            PostDistanceResponse(
+                **PostResponse.model_validate(post).model_dump(), distance=distance
+            )
+            for post, distance in posts
+        ]
 
     async def get_post_votes(self, post_id: int) -> int:
         await self._get_post_or_404(post_id)
@@ -97,6 +131,11 @@ class PostService:
     async def create(self, post_in: PostCreate, user_id: int) -> PostResponse:
         post = models.Post(**post_in.model_dump(), owner_id=user_id)
         self.db.add(post)
+
+        embedded = await self.embedding_service.get_embedding(
+            f"{post.title}\n\n{post.content}"
+        )
+        post.embedding = embedded
         await self.db.commit()
         await self.db.refresh(post, ["owner"])
         return PostResponse.model_validate(post)
@@ -112,7 +151,13 @@ class PostService:
         for key, value in post_in.model_dump().items():
             setattr(post, key, value)
 
+        embedded = await self.embedding_service.get_embedding(
+            f"{post.title}\n\n{post.content}"
+        )
+        post.embedding = embedded
+
         await self.db.commit()
+
         await self.redis.delete(f"post:{post_id}")
         await self.db.refresh(post, ["owner"])
         return PostResponse.model_validate(post)
