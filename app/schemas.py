@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class PostBase(BaseModel):
@@ -63,3 +63,27 @@ class PostResponse(PostBase):
     owner: UserResponse
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class PostDistanceResponse(PostResponse):
+    distance: float
+
+
+class RAGRequest(BaseModel):
+    question: str
+    limit: int = 5
+
+
+class RAGResponse(BaseModel):
+    thought_process: list[str] = Field(
+        description="Soruyu yanıtlarken bağlamdaki hangi bilgileri nasıl değerlendirdiğinin adım adım kısa düşüncesi"
+    )
+    answer: str = Field(
+        description="Kullanıcının sorusuna yalnızca verilen bağlam (postlar) kullanılarak verilen net Türkçe yanıt"
+    )
+    enough_context: bool = Field(
+        description="Verilen postlardaki bilgileri soruyu doğru yanıtlamak için yeterli miydi?"
+    )
+    source_post_ids: list[int] = Field(
+        description="Yanıtı oluştururken doğrudan kullanılan postların ID listesi (hiçbiri kullanılmadıysa boş liste)"
+    )
