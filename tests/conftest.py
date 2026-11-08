@@ -1,7 +1,7 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 from redis import asyncio as aioredis
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -13,6 +13,7 @@ from app.main import app
 from app.models import Base
 from app.oauth2 import create_token
 from app.redis import get_redis
+from app.services.embedding_service import EmbeddingService
 
 engine = create_async_engine(
     f"postgresql+asyncpg://{settings.DATABASE_USER}:{settings.DATABASE_PASSWORD}@{settings.DATABASE_HOST}/{settings.DATABASE_NAME}_test",
@@ -22,9 +23,17 @@ engine = create_async_engine(
 TestingLocalSession = async_sessionmaker(expire_on_commit=False, bind=engine)
 
 
+class FakeEmbeddingService:
+    async def get_embedding(
+        self, text: str, task_type: str = "RETRIEVAL_DOCUMENT"
+    ) -> list[float]:
+        return [0.1] * settings.EMBEDDING_DIMENSIONS
+
+
 @pytest.fixture
 async def session():
     async with engine.begin() as conn:
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
@@ -48,6 +57,7 @@ async def client(session):
 
     app.dependency_overrides[get_db] = get_test_db
     app.dependency_overrides[get_redis] = get_test_redis
+    app.dependency_overrides[EmbeddingService] = lambda: FakeEmbeddingService()
     limiter.enabled = False
 
     async with AsyncClient(
