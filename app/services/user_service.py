@@ -40,6 +40,13 @@ class UserService:
         await self.redis.set(cache_key, user_json, ex=60)
         return user_response
 
+    async def get_all(self, limit=10) -> list[UserResponse]:
+        query = select(models.User).limit(limit)
+        result = await self.db.execute(query)
+        users = result.scalars().all()
+
+        return [UserResponse.model_validate(user) for user in users]
+
     async def create(
         self,
         user_in: UserCreate,

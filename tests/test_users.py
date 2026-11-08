@@ -1,7 +1,7 @@
 import pytest
 from jose import jwt
 
-from app import schemas
+from app import models, oauth2, schemas
 from app.config import settings
 
 
@@ -78,3 +78,22 @@ async def test_logout_twice_fails(authorized_client):
     res = await authorized_client.post("/logout")
     assert res.status_code == 403
     assert res.json()["detail"] == "Bu oturum artık geçerli değil."
+
+
+async def test_normal_user_cannot_get_all_users(authorized_client):
+    res = await authorized_client.get("/users/")
+    assert res.status_code == 403
+    assert res.json()["detail"] == "Bu işlemi yapmak için yetkiniz yok."
+
+
+async def test_admin_user_can_get_all_users(client, test_user, session):
+    test_user_obj = await session.get(models.User, test_user["id"])
+    test_user_obj.role = models.Roles.ADMIN.value
+    await session.commit()
+
+    admin_token = oauth2.create_token({"user_id": f"{test_user['id']}"})
+    client.headers["Authorization"] = f"Bearer {admin_token}"
+
+    res = await client.get("/users/")
+    assert res.status_code == 200
+    assert isinstance(res.json(), list)

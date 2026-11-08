@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from . import models
 from .config import settings
 from .database import get_db
-from .errors import SessionExpiredError
+from .errors import PermissionDeniedError, SessionExpiredError
 from .redis import get_redis
 from .schemas import TokenData, UserResponse
 
@@ -86,3 +86,13 @@ async def get_current_user(
     await redis.set(user_cache_key, user_response.model_dump_json(), ex=600)
 
     return user
+
+
+class RoleChecker:
+    def __init__(self, allowed_roles: list[str]):
+        self.allowed_roles = allowed_roles
+
+    def __call__(self, current_user: models.User = Depends(get_current_user)):
+        if current_user.role not in self.allowed_roles:
+            raise PermissionDeniedError()
+        return current_user

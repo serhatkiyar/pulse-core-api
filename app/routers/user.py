@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, Request, status
 
+from .. import models
 from ..limiter import limiter
+from ..oauth2 import RoleChecker
 from ..schemas import UserCreate, UserResponse
 from ..services.user_service import UserService
 
@@ -20,3 +22,14 @@ async def create_user(
     user_service: UserService = Depends(),
 ):
     return await user_service.create(user_in=user_in)
+
+
+@router.get("/", response_model=list[UserResponse])
+@limiter.limit("10/minute")
+async def get_all_users(
+    request: Request,
+    user_service: UserService = Depends(),
+    user_credentials: models.User = Depends(RoleChecker([models.Roles.ADMIN])),
+    limit: int = 10,
+):
+    return await user_service.get_all(limit)
