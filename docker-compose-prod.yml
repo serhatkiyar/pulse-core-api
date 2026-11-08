@@ -14,21 +14,31 @@ services:
       - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL}
+      - EMBEDDING_DIMENSIONS=${EMBEDDING_DIMENSIONS}
+      - LLM_MODEL=${LLM_MODEL}
     depends_on:
       - postgres
       - redis
 
   postgres:
-    image: postgres:17
+    image: pgvector/pgvector:pg17
+    container_name: pulse_postgres
+    ports:
+      - "5432:5432"
     environment:
       - POSTGRES_DB=${DATABASE_NAME}
       - POSTGRES_PASSWORD=${DATABASE_PASSWORD}
+      - POSTGRES_USER=${DATABASE_USER}
     volumes:
       - postgres-db:/var/lib/postgresql/data
 
   redis:
     image: redis:7-alpine
     container_name: pulse-redis
+    ports:
+      - "6379:6379"
     volumes:
       - redis-data:/data
 

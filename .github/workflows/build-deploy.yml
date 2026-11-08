@@ -10,6 +10,8 @@ on:
 
 jobs:
   build:
+    runs-on: ubuntu-latest
+
     env:
       DATABASE_HOST: localhost
       DATABASE_NAME: pulse_db
@@ -18,10 +20,16 @@ jobs:
       SECRET_KEY: ${{ secrets.SECRET_KEY || '09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7' }}
       ALGORITHM: HS256
       ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
+      GEMINI_API_KEY: test-gemini-key
+      EMBEDDING_MODEL: gemini-embedding-001
+      EMBEDDING_DIMENSIONS: 768
+      LLM_MODEL: gemini-3.5-flash-lite
 
     services:
       postgres:
-        image: postgres:17
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ${{ secrets.DATABASE_PASSWORD || 'password123' }}
@@ -34,7 +42,16 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
-    runs-on: ubuntu-latest
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: pulling git repo
         uses: actions/checkout@v4
