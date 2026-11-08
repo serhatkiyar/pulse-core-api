@@ -17,7 +17,7 @@ async def test_create_user(client):
         json={
             "name": "Serhat",
             "email": "serhat@gmail.com",
-            "password": "password123",
+            "password": "Password123",
         },
     )
     new_user = schemas.UserResponse(**res.json())
@@ -78,5 +78,3 @@ async def test_logout_twice_fails(authorized_client):
     res = await authorized_client.post("/logout")
     assert res.status_code == 403
     assert res.json()["detail"] == "Bu oturum artık geçerli değil."
-
-

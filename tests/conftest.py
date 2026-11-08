@@ -75,7 +75,7 @@ async def test_user(client):
     user_data = {
         "name": "Serhat",
         "email": "serhat@gmail.com",
-        "password": "password123",
+        "password": "Password123",
     }
     res = await client.post("/users/", json=user_data)
     assert res.status_code == 201
@@ -89,7 +89,7 @@ async def test_user2(client):
     user_data = {
         "name": "Ahmet",
         "email": "ahmet@gmail.com",
-        "password": "password123",
+        "password": "Password123",
     }
     res = await client.post("/users/", json=user_data)
     assert res.status_code == 201
