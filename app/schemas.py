@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class PostBase(BaseModel):
@@ -25,6 +25,17 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, password: str):
+        if len(password) < 8:
+            raise ValueError("Şifre en az 8 karakterli olmalıdır.")
+        if not any(char.isupper() for char in password):
+            raise ValueError("Şifre en az bir büyük harf içermelidir.")
+        if not any(char.isdigit() for char in password):
+            raise ValueError("Şifre en az bir rakam içermelidir.")
+        return password
 
 
 class UserResponse(UserBase):
