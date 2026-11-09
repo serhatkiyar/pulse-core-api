@@ -11,9 +11,12 @@ services:
     environment:
       - DATABASE_HOST=postgres
       - REDIS_HOST=redis
+      - SMTP_HOST=mailpit
+      - SMTP_PORT=1025
     depends_on:
       - postgres
       - redis
+      - mailpit
 
   postgres:
     image: pgvector/pgvector:pg17
@@ -34,6 +37,22 @@ services:
     - "6379:6379"
     volumes:
     - redis-data:/data
+
+  mailpit:
+    image: axllent/mailpit
+    container_name: mailpit
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
+    ports:
+        - 8025:8025
+        - 1025:1025
+    environment:
+        MP_MAX_MESSAGES: 5000
+        MP_DATABASE: /data/mailpit.db
+        MP_SMTP_AUTH_ACCEPT_ANY: 1
+        MP_SMTP_AUTH_ALLOW_INSECURE: 1
+
 volumes:
   postgres-db:
   redis-data:

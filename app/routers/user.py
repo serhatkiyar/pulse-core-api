@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 
 from .. import models
 from ..limiter import limiter
 from ..oauth2 import RoleChecker
 from ..schemas import UserCreate, UserResponse
+from ..services.email_service import send_welcome_email
 from ..services.user_service import UserService
 
 router = APIRouter(prefix="/users", tags=["User"])
@@ -19,9 +20,12 @@ async def get_user(id: int, user_service: UserService = Depends()):
 async def create_user(
     request: Request,
     user_in: UserCreate,
+    background_tasks: BackgroundTasks,
     user_service: UserService = Depends(),
 ):
-    return await user_service.create(user_in=user_in)
+    user = await user_service.create(user_in=user_in)
+    background_tasks.add_task(send_welcome_email, to_email=user.email, name=user.name)
+    return user
 
 
 @router.get("/", response_model=list[UserResponse])
