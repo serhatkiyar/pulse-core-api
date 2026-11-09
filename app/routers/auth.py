@@ -19,6 +19,16 @@ async def login(
     return await auth_service.login(user_credentials)
 
 
+@router.post("/refresh", response_model=schemas.Token)
+@limiter.limit("10/minute")
+async def refresh_token(
+    request: Request,
+    token_in: schemas.RefreshTokenRequest,
+    auth_service: AuthService = Depends(),
+):
+    return await auth_service.refresh_tokens(token_in.refresh_token)
+
+
 @router.post("/logout")
 @limiter.limit("5/minute")
 async def logout(

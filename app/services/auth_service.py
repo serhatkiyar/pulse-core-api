@@ -1,11 +1,12 @@
 from datetime import UTC, datetime
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException, status
 from redis import asyncio as redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models, oauth2, schemas, utils
+from ..config import settings
 from ..database import get_db
 from ..errors import (
     InvalidUserCredentialsError,
@@ -45,9 +46,80 @@ class AuthService:
             ex=600,
         )
 
-        access_token = oauth2.create_token(data={"user_id": user.id})
+        access_token = oauth2.create_access_token(
+            data={"user_id": user.id, "role": user.role}
+        )
+        refresh_token = oauth2.create_refresh_token(
+            data={"user_id": user.id}
+        )
 
-        return schemas.Token(access_token=access_token, token_type="bearer")
+        return schemas.Token(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_type="bearer",
+            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        )
+
+    async def refresh_tokens(self, refresh_token_str: str) -> schemas.Token:
+        credentials_exception = HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Geçersiz veya süresi dolmuş refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        payload = oauth2.verify_refresh_token(refresh_token_str, credentials_exception)
+        user_id = payload["user_id"]
+        jti = payload["jti"]
+        iat = payload.get("iat", 0)
+
+        # 1. Kullanıcının tüm oturumları kapatılmış mı?
+        revoked_at = await self.redis.get(f"user:{user_id}:revoked_at")
+        if revoked_at and iat <= int(revoked_at):
+            raise credentials_exception
+
+        # 2. Token Reuse Detection (Çift Kullanım / Hırsızlık Kontrolü):
+        is_used = await self.redis.get(f"used_refresh:{jti}")
+        if is_used:
+            now_ts = int(datetime.now(UTC).timestamp())
+            await self.redis.set(
+                f"user:{user_id}:revoked_at",
+                str(now_ts),
+                ex=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Güvenlik ihlali tespit edildi. Tüm oturumlar kapatıldı.",
+            )
+
+        # 3. Meşru kullanım: Eski refresh token'ı kullanılmış olarak işaretle
+        exp = payload.get("exp")
+        now = datetime.now(UTC).timestamp()
+        remaining_ttl = (
+            int(exp - now) if exp else settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400
+        )
+        if remaining_ttl > 0:
+            await self.redis.set(f"used_refresh:{jti}", "1", ex=remaining_ttl)
+
+        # 4. Kullanıcıyı getir
+        query = select(models.User).where(models.User.id == int(user_id))
+        result = await self.db.execute(query)
+        user = result.scalar_one_or_none()
+        if not user:
+            raise credentials_exception
+
+        # 5. Yeni token çifti üret (Rotation)
+        new_access_token = oauth2.create_access_token(
+            data={"user_id": user.id, "role": user.role}
+        )
+        new_refresh_token = oauth2.create_refresh_token(
+            data={"user_id": user.id}
+        )
+
+        return schemas.Token(
+            access_token=new_access_token,
+            refresh_token=new_refresh_token,
+            token_type="bearer",
+            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        )
 
     async def logout(self, token: str):
         payload = _decode_token(token)

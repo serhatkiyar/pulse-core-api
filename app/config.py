@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     REDIS_HOST: str
     REDIS_PORT: int
@@ -18,6 +19,9 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str
     EMBEDDING_DIMENSIONS: int
     LLM_MODEL: str
+
+    SMTP_HOST: str = "localhost"
+    SMTP_PORT: int = 1025
 
     @property
     def REDIS_URL(self) -> str:

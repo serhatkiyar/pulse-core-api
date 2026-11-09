@@ -40,6 +40,8 @@ async def test_login_user(client, test_user):
     id = payload.get("user_id")
     assert id == test_user["id"]
     assert login_res.token_type == "bearer"
+    assert login_res.refresh_token is not None
+    assert login_res.expires_in == settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
     assert res.status_code == 200
 
 
@@ -97,3 +99,56 @@ async def test_admin_user_can_get_all_users(client, test_user, session):
     res = await client.get("/users/")
     assert res.status_code == 200
     assert isinstance(res.json(), list)
+
+
+async def test_refresh_token_success(client, test_user):
+    login_res = await client.post(
+        "/login",
+        data={"username": test_user["email"], "password": test_user["password"]},
+    )
+    tokens = login_res.json()
+    refresh_token = tokens["refresh_token"]
+
+    res = await client.post("/refresh", json={"refresh_token": refresh_token})
+    assert res.status_code == 200
+    new_tokens = res.json()
+    assert "access_token" in new_tokens
+    assert "refresh_token" in new_tokens
+    assert new_tokens["access_token"] != tokens["access_token"]
+    assert new_tokens["refresh_token"] != tokens["refresh_token"]
+
+
+async def test_refresh_token_theft_detection(client, test_user):
+    login_res = await client.post(
+        "/login",
+        data={"username": test_user["email"], "password": test_user["password"]},
+    )
+    tokens = login_res.json()
+    refresh_token = tokens["refresh_token"]
+
+    # 1. İlk yenileme (meşru)
+    first_refresh = await client.post("/refresh", json={"refresh_token": refresh_token})
+    assert first_refresh.status_code == 200
+
+    # 2. İkinci yenileme (aynı token ile tekrar - hırsızlık simülasyonu)
+    second_refresh = await client.post("/refresh", json={"refresh_token": refresh_token})
+    assert second_refresh.status_code == 401
+    assert "Güvenlik ihlali tespit edildi" in second_refresh.json()["detail"]
+
+    # 3. Hırsızlık sonrası yeni alınan meşru token da iptal edilmiş olmalı (tüm oturumlar kapatıldı)
+    new_access_token = first_refresh.json()["access_token"]
+    client.headers["Authorization"] = f"Bearer {new_access_token}"
+    posts_res = await client.get("/posts/")
+    assert posts_res.status_code == 403 or posts_res.status_code == 401
+
+
+async def test_cannot_use_refresh_token_as_access_token(client, test_user):
+    login_res = await client.post(
+        "/login",
+        data={"username": test_user["email"], "password": test_user["password"]},
+    )
+    refresh_token = login_res.json()["refresh_token"]
+
+    client.headers["Authorization"] = f"Bearer {refresh_token}"
+    res = await client.get("/posts/")
+    assert res.status_code == 401

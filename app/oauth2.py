@@ -20,6 +20,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 SECRET_KEY = settings.SECRET_KEY
 ALGORITHM = settings.ALGORITHM
 ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
+REFRESH_TOKEN_EXPIRE_DAYS = settings.REFRESH_TOKEN_EXPIRE_DAYS
 
 
 def _decode_token(token: str):
@@ -27,12 +28,37 @@ def _decode_token(token: str):
     return payload
 
 
-def create_token(data: dict) -> str:
+def create_access_token(data: dict) -> str:
     to_encode = data.copy()
-    expire = datetime.now(UTC) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire, "jti": str(uuid.uuid4())})
-    encoded_jwt = jwt.encode(to_encode, key=SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    now = datetime.now(UTC)
+    expire = now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.setdefault("type", "access")
+    to_encode.update(
+        {
+            "iat": int(now.timestamp()),
+            "exp": expire,
+            "jti": str(uuid.uuid4()),
+        }
+    )
+    return jwt.encode(to_encode, key=SECRET_KEY, algorithm=ALGORITHM)
+
+
+create_token = create_access_token
+
+
+def create_refresh_token(data: dict) -> str:
+    to_encode = data.copy()
+    now = datetime.now(UTC)
+    expire = now + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    to_encode.update(
+        {
+            "type": "refresh",
+            "iat": int(now.timestamp()),
+            "exp": expire,
+            "jti": str(uuid.uuid4()),
+        }
+    )
+    return jwt.encode(to_encode, key=SECRET_KEY, algorithm=ALGORITHM)
 
 
 async def verify_access_token(
@@ -42,7 +68,13 @@ async def verify_access_token(
         payload = jwt.decode(token=token, key=SECRET_KEY, algorithms=[ALGORITHM])
         id: str | None = payload.get("user_id")
         jti: str | None = payload.get("jti")
+        token_type: str | None = payload.get("type")
+        iat: int | None = payload.get("iat")
+
         if not id or not jti:
+            raise credentials_exception
+
+        if token_type and token_type != "access":
             raise credentials_exception
 
         cache_key = f"blacklist:{jti}"
@@ -50,11 +82,31 @@ async def verify_access_token(
         if cached:
             raise SessionExpiredError()
 
+        if iat is not None:
+            revoked_at = await redis.get(f"user:{id}:revoked_at")
+            if revoked_at and iat <= int(revoked_at):
+                raise SessionExpiredError()
+
         token_data = TokenData(id=str(id))
     except JWTError:
         raise credentials_exception
 
     return token_data
+
+
+def verify_refresh_token(token: str, credentials_exception) -> dict:
+    try:
+        payload = jwt.decode(token=token, key=SECRET_KEY, algorithms=[ALGORITHM])
+        id: str | None = payload.get("user_id")
+        jti: str | None = payload.get("jti")
+        token_type: str | None = payload.get("type")
+
+        if not id or not jti or token_type != "refresh":
+            raise credentials_exception
+
+        return payload
+    except JWTError:
+        raise credentials_exception
 
 
 async def get_current_user(

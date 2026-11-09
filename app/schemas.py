@@ -59,7 +59,14 @@ class TokenData(BaseModel):
 
 class Token(BaseModel):
     access_token: str
-    token_type: str
+    token_type: str = "bearer"
+    expires_in: int
+
+    refresh_token: str
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(min_length=1, description="kullanıcının refresh tokeni")
 
 
 class VoteIn(BaseModel):
