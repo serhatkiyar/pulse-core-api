@@ -2,14 +2,11 @@ import json
 
 from fastapi import Depends
 from redis import asyncio as redis
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from .. import models
-from ..database import get_db
 from ..errors import PermissionDeniedError, PostNotFoundError
 from ..redis import get_redis
+from ..repositories.post_repository import PostRepository
 from ..schemas import PostCreate, PostDistanceResponse, PostResponse, PostUpdate
 from .embedding_service import EmbeddingService
 
@@ -18,22 +15,16 @@ class PostService:
     def __init__(
         self,
         redis: redis.Redis = Depends(get_redis),
-        db: AsyncSession = Depends(get_db),
         embedding_service: EmbeddingService = Depends(EmbeddingService),
+        post_repository: PostRepository = Depends(PostRepository),
     ):
 
-        self.db = db
         self.redis = redis
         self.embedding_service = embedding_service
+        self.post_repository = post_repository
 
     async def _get_post_or_404(self, post_id: int) -> models.Post:
-        query = (
-            select(models.Post)
-            .options(selectinload(models.Post.owner))
-            .where(models.Post.id == post_id)
-        )
-        result = await self.db.execute(query)
-        post = result.scalar_one_or_none()
+        post = await self.post_repository.get_by_id(post_id)
 
         if not post:
             raise PostNotFoundError()
@@ -47,22 +38,10 @@ class PostService:
             task_type="RETRIEVAL_QUERY",
         )
 
-        distance_col = models.Post.embedding.cosine_distance(query_embedding).label(
-            "distance"
-        )
-        MAX_DISTANCE = 0.45
-
-        query = (
-            select(models.Post, distance_col)
-            .options(selectinload(models.Post.owner))
-            .where(models.Post.embedding.is_not(None))
-            .where(distance_col < MAX_DISTANCE)
-            .order_by(models.Post.embedding.cosine_distance(query_embedding))
-            .limit(limit)
+        posts = await self.post_repository.search_by_vector(
+            query_embedding=query_embedding, limit=limit
         )
 
-        result = await self.db.execute(query)
-        posts = result.all()
         return [
             PostDistanceResponse(
                 **PostResponse.model_validate(post).model_dump(), distance=distance
@@ -79,13 +58,7 @@ class PostService:
         if cached is not None:
             return int(cached)
 
-        query = (
-            select(func.count())
-            .select_from(models.Vote)
-            .where(models.Vote.post_id == post_id)
-        )
-        result = await self.db.execute(query)
-        vote_count = result.scalar() or 0
+        vote_count = await self.post_repository.get_vote(post_id)
 
         await self.redis.set(cache_key, vote_count, ex=86400)
         return vote_count
@@ -97,16 +70,7 @@ class PostService:
         if cached:
             return [PostResponse.model_validate(i) for i in json.loads(cached)]
 
-        query = (
-            select(models.Post)
-            .options(selectinload(models.Post.owner))
-            .where(models.Post.title.contains(search))
-            .limit(limit)
-            .offset(skip)
-        )
-
-        result = await self.db.execute(query)
-        posts = result.scalars().all()
+        posts = await self.post_repository.get_all(limit, skip, search)
 
         posts_response = [
             PostResponse.model_validate(i).model_dump(mode="json") for i in posts
@@ -130,15 +94,15 @@ class PostService:
 
     async def create(self, post_in: PostCreate, user_id: int) -> PostResponse:
         post = models.Post(**post_in.model_dump(), owner_id=user_id)
-        self.db.add(post)
 
         embedded = await self.embedding_service.get_embedding(
             f"{post.title}\n\n{post.content}"
         )
         post.embedding = embedded
-        await self.db.commit()
-        await self.db.refresh(post, ["owner"])
-        return PostResponse.model_validate(post)
+
+        created_post = await self.post_repository.create(post)
+
+        return PostResponse.model_validate(created_post)
 
     async def update(
         self, post_id: int, post_in: PostUpdate, user_id: int
@@ -156,11 +120,9 @@ class PostService:
         )
         post.embedding = embedded
 
-        await self.db.commit()
+        updated_post = await self.post_repository.update(post)
 
-        await self.redis.delete(f"post:{post_id}")
-        await self.db.refresh(post, ["owner"])
-        return PostResponse.model_validate(post)
+        return PostResponse.model_validate(updated_post)
 
     async def delete(self, post_id: int, user_id: int) -> None:
         post = await self._get_post_or_404(post_id)
@@ -168,6 +130,6 @@ class PostService:
         if post.owner_id != user_id:
             raise PermissionDeniedError()
 
-        await self.db.delete(post)
-        await self.db.commit()
+        await self.post_repository.delete(post)
+
         await self.redis.delete(f"post:{post_id}", f"post:{post_id}:votes")
