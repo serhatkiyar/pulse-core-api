@@ -1,7 +1,11 @@
+import hashlib
+
 from fastapi import Depends
 from google.genai import types
+from redis.asyncio import Redis
 
 from ..config import settings
+from ..redis import get_redis
 from ..schemas import RAGResponse
 from .embedding_service import client
 from .post_service import PostService
@@ -21,10 +25,22 @@ SYSTEM_PROMPT = """Sen yardımcı bir soru-cevap (RAG) asistanısın.
 
 
 class RagService:
-    def __init__(self, post_service: PostService = Depends(PostService)):
+    def __init__(
+        self,
+        post_service: PostService = Depends(PostService),
+        redis: Redis = Depends(get_redis),
+    ):
         self.post_service = post_service
+        self.redis = redis
 
     async def ask(self, question: str, limit: int = 5) -> RAGResponse:
+        cleaned_question = question.strip().lower()
+        cache_key = f"rag:cache:{hashlib.sha256(cleaned_question.encode()).hexdigest()}"
+        cached = await self.redis.get(cache_key)
+
+        if cached:
+            return RAGResponse.model_validate_json(cached)
+
         posts = await self.post_service.semantic_search(
             query_text=question, limit=limit
         )
@@ -57,4 +73,6 @@ class RagService:
             ),
         )
 
-        return RAGResponse.model_validate_json(response.text)
+        output = RAGResponse.model_validate_json(response.text)
+        await self.redis.set(cache_key, output.model_dump_json(), ex=3600)
+        return output
