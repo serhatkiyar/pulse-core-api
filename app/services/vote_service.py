@@ -23,7 +23,9 @@ class VoteService:
     async def vote(self, vote_in: VoteIn, user_id: int):
         await self.post_service.get_by_id(vote_in.post_id)
 
-        vote_found = await self.vote_repository.get(vote_in.post_id, user_id)
+        vote_found = await self.vote_repository.get(
+            vote_in.post_id, user_id, for_update=True
+        )
         cache_key = f"post:{vote_in.post_id}:votes"
 
         if vote_in.method == 1:

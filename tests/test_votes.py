@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from app import models
@@ -46,3 +48,16 @@ async def test_vote_post_non_exist(authorized_client, test_posts):
 async def test_vote_unauthorized_user(client, test_posts):
     res = await client.post("/vote/", json={"post_id": test_posts[3].id, "method": 1})
     assert res.status_code == 401
+
+
+async def test_duplicate_vote(authorized_client, test_posts):
+    task1 = authorized_client.post(
+        "/vote/", json={"post_id": test_posts[3].id, "method": 1}
+    )
+    task2 = authorized_client.post(
+        "/vote/", json={"post_id": test_posts[3].id, "method": 1}
+    )
+    res1, res2 = await asyncio.gather(task1, task2)
+    status_codes = {res1.status_code, res2.status_code}
+
+    assert status_codes == {201, 409}
